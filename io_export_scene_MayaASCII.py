@@ -21,8 +21,9 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
     bl_label = "Export Maya ASCII (*.ma)"
     bl_options = {'REGISTER', 'UNDO'}
     
-    enumber = IntProperty (name ="enumber", default = 50, description="Max. Number of Empties to be Exported")
     sscale = FloatProperty (name ="sscale", default = 1, description="Scene Scale Multiplier")
+    enumber = IntProperty (name ="enumber", default = 50, description="Max. Number of Empties to be Exported")
+    anim_empties = BoolProperty (name ="anim_empties", default = False, description="Animate Empties")
     
     filename_ext = ".ma"
     filter_glob = StringProperty(default="*.ma", options={'HIDDEN'})
@@ -41,7 +42,11 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
         row = col.row()
         row.prop(self,'sscale','Scene Scale')
         row = col.row()
+        row.separator()
+        row = col.row()
         row.prop(self,'enumber','Max. Number of Empties')
+        row = col.row()
+        row.prop(self,'anim_empties','Animate Empties')
     
     def exportTracking(self, filename):
         print("Exporting...")
@@ -54,6 +59,7 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
         expCamera = expCamObj.data
         enumber = self.enumber
         sscale = self.sscale*100
+        anim_empties = self.anim_empties
         oframe = scene.frame_current
         start_frame = scene.frame_start
         end_frame = scene.frame_end
@@ -120,7 +126,19 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
         #displayResolution        
         t['header'].append('    setAttr ".dr" yes;\n')
         
-        #camera animation
+        #empties
+        tracker=[]
+        tracker_data=[] 
+        
+        idx = 1
+        for o in bpy.context.selected_objects:
+            if o.type=='EMPTY':
+                tracker.append(o)
+                tracker_data.append(['']*9)
+                idx+=1
+            if idx>enumber: break
+        
+        #animation
         c_fl =''
         c_v =''
         c_tx =''
@@ -149,7 +167,37 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
             c_rx+=(' %s %s'%(frame,rx))
             c_ry+=(' %s %s'%(frame,ry))
             c_rz+=(' %s %s'%(frame,rz))
-        
+            if anim_empties or scene.frame_current == scene.frame_start:
+                idx = 1
+                for o in tracker:
+                    x = bpy.data.objects[o.name].location[0]*sscale
+                    y = bpy.data.objects[o.name].location[2]*sscale
+                    z = bpy.data.objects[o.name].location[1]*sscale*-1
+                    
+                    if anim_empties:
+                        rx = degrees(bpy.data.objects[o.name].rotation_euler[0])-90
+                        ry = degrees(-bpy.data.objects[o.name].rotation_euler[2])*-1
+                        rz = degrees(bpy.data.objects[o.name].rotation_euler[1])
+                    
+                        sx = bpy.data.objects[o.name].scale[0]*sscale
+                        sy = bpy.data.objects[o.name].scale[2]*sscale
+                        sz = bpy.data.objects[o.name].scale[1]*sscale
+                        
+                        tracker_data[idx-1][0]+=(' %s %s'%(frame,x))
+                        tracker_data[idx-1][1]+=(' %s %s'%(frame,y))
+                        tracker_data[idx-1][2]+=(' %s %s'%(frame,z))
+                        tracker_data[idx-1][3]+=(' %s %s'%(frame,rx))
+                        tracker_data[idx-1][4]+=(' %s %s'%(frame,ry))
+                        tracker_data[idx-1][5]+=(' %s %s'%(frame,rz))
+                        tracker_data[idx-1][6]+=(' %s %s'%(frame,sx))
+                        tracker_data[idx-1][7]+=(' %s %s'%(frame,sy))
+                        tracker_data[idx-1][8]+=(' %s %s'%(frame,sz))
+                    else:
+                        tracker_data[idx-1][0]+=(' %s'%(x))
+                        tracker_data[idx-1][1]+=(' %s'%(y))
+                        tracker_data[idx-1][2]+=(' %s'%(z))
+                    idx+=1
+                
         #camera animation lines   
         t['anim']=[]
         t['anim'].append('createNode animCurveTU -n "%s_focalLength";\n'%(expCamObj.name))
@@ -187,17 +235,60 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
         t['cam_footer'].append('connectAttr "%s_rotateY.o" "%s.ry";\n'%(expCamObj.name,expCamObj.name))
         t['cam_footer'].append('connectAttr "%s_rotateZ.o" "%s.rz";\n'%(expCamObj.name,expCamObj.name))
         
-        #empties
-        tracker=[]
-        tracker_data=[] 
-        
+        #point animation lines
+        t['point'] = [] 
         idx = 1
-        for o in bpy.context.selected_objects:
-            if o.type=='EMPTY':
-                tracker.append(o)
-                tracker_data.append(['']*9)
-                idx+=1
-            if idx>enumber: break
+        for o in tracker:
+            t['point'].append('createNode transform -n "Track_%s";\n'%idx)
+            if anim_empties:
+                t['point'].append('createNode locator -n "Point_%s" -p "Track_%s";\n'%(idx,idx))
+                t['point'].append(' setAttr -k off ".v";\n')
+                tracker_data[idx-1][0]+=(' %s %s'%(frame,x))
+                tracker_data[idx-1][1]+=(' %s %s'%(frame,y))
+                tracker_data[idx-1][2]+=(' %s %s'%(frame,z))
+                tracker_data[idx-1][3]+=(' %s %s'%(frame,rx))
+                tracker_data[idx-1][4]+=(' %s %s'%(frame,ry))
+                tracker_data[idx-1][5]+=(' %s %s'%(frame,rz))
+                tracker_data[idx-1][6]+=(' %s %s'%(frame,sx))
+                tracker_data[idx-1][7]+=(' %s %s'%(frame,sy))
+                tracker_data[idx-1][8]+=(' %s %s'%(frame,sz))
+                t['point'].append('createNode animCurveTU -n "Track_%s_tx";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][0]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_ty";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][1]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_tz";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][2]))
+                
+                t['point'].append('createNode animCurveTU -n "Track_%s_rx";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][3]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_ry";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][4]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_rz";\n')
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][5]))
+                
+                t['point'].append('createNode animCurveTU -n "Track_%s_sx";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][6]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_sy";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][7]))
+                t['point'].append('createNode animCurveTU -n "Track_%s_sz";\n'%idx)
+                t['point'].append('  setAttr -s %s ".ktv[%s:%s]"%s;\n'%(num_frames,start_frame,end_frame,tracker_data[idx-1][8]))
+                
+                t['point'].append('connectAttr "Track_%s_tx.o" "Track_%s.tx";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_ty.o" "Track_%s.ty";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_tz.o" "Track_%s.tz";\n'%(idx,idx))
+                
+                t['point'].append('connectAttr "Track_%s_rx.o" "Track_%s.rx";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_ry.o" "Track_%s.ry";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_rz.o" "Track_%s.rz";\n'%(idx,idx))
+                
+                t['point'].append('connectAttr "Track_%s_sx.o" "Track_%s.sx";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_sy.o" "Track_%s.sy";\n'%(idx,idx))
+                t['point'].append('connectAttr "Track_%s_sz.o" "Track_%s.sz";\n'%(idx,idx))
+            else:
+                t['point'].append(' setAttr ".t" -type "double3" %s %s %s;\n'%(tracker_data[idx-1][0],tracker_data[idx-1][1],tracker_data[idx-1][2]))
+                t['point'].append('createNode locator -n "Point_%s" -p "Track_%s";\n'%(idx,idx))
+                t['point'].append(' setAttr -k off ".v";\n')
+            idx+=1
         
         #footer
         t['footer']=[]
@@ -215,6 +306,9 @@ class ExportMayaASCII(bpy.types.Operator, ExportHelper):
             mafile.write(line)      
             
         for line in t['cam_footer']:
+            mafile.write(line)  
+            
+        for line in t['point']:
             mafile.write(line)  
             
         for line in t['footer']:
