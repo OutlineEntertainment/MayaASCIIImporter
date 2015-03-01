@@ -8,8 +8,3 @@ A few things to be aware of:
 -The script was only tested with Maya ASCII files exported from Autodesk MatchMover (although files from other applications should work as well)
 
 -At the moment animated markers aren't supported
-
-
-Also:
-
-A Maya ASCII export script for Blender is in development.
